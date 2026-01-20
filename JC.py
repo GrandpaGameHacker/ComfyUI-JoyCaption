@@ -198,14 +198,25 @@ class JC_Models:
             handle_model_error(e)
     
     @torch.inference_mode()
-    def generate(self, image: Image.Image, system: str, prompt: str, max_new_tokens: int, temperature: float, top_p: float, top_k: int) -> str:
+    def generate(self, image: Image.Image, system: str, prompt: str, max_new_tokens: int, temperature: float, top_p: float, top_k: int, response_injection: str) -> str:
         """Generates a caption for the given image."""
         convo = [
             {"role": "system", "content": system.strip()},
             {"role": "user", "content": prompt.strip()},
         ]
 
-        convo_string = self.processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
+        has_response_injection = False
+
+        if response_injection.strip():
+            has_response_injection = True
+            response_injection = response_injection.strip()
+            convo.append({"role": "assistant", "content": response_injection})
+
+        convo_string = None
+        if has_response_injection:
+            convo_string = self.processor.apply_chat_template(convo, tokenize=False, continue_final_message=True)
+        else:
+            convo_string = self.processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
         assert isinstance(convo_string, str)
 
         if image.mode != 'RGB':
@@ -232,6 +243,10 @@ class JC_Models:
 
         generate_ids = generate_ids[inputs['input_ids'].shape[1]:]
         caption = self.processor.tokenizer.decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+
+        if has_response_injection:
+            caption = response_injection + caption
+
         return caption.strip()
 
 class JC_ExtraOptions:
@@ -268,6 +283,7 @@ class JC:
                 "quantization": (list(MEMORY_EFFICIENT_CONFIGS.keys()), {"default": "Balanced (8-bit)", "tooltip": "Choose between speed and quality. 8-bit is recommended for most users"}),
                 "prompt_style": (list(CAPTION_TYPE_MAP.keys()), {"default": "Descriptive", "tooltip": "Select the style of caption you want to generate"}),
                 "caption_length": (CAPTION_LENGTH_CHOICES, {"default": "any", "tooltip": "Control the length of the generated caption"}),
+                "response_injection": ("STRING", {"default": "", "multiline": True, "tooltip": "Injects starting tokens into the LLM's response to guide output directly."}),
                 "memory_management": (["Keep in Memory", "Clear After Run", "Global Cache"], {"default": "Keep in Memory", "tooltip": "Choose how to manage model memory. 'Keep in Memory' for faster processing, 'Clear After Run' for limited VRAM, 'Global Cache' for fastest processing if you have enough VRAM"}),
             },
             "optional": {
@@ -285,7 +301,7 @@ class JC:
         self.current_memory_mode = None
         self.current_model = None
     
-    def generate(self, image, model, quantization, prompt_style, caption_length, memory_management, extra_options=None):
+    def generate(self, image, model, quantization, prompt_style, caption_length, memory_management, response_injection, extra_options=None):
         try:
             validate_model_parameters(quantization, list(MEMORY_EFFICIENT_CONFIGS.keys()))
             
@@ -321,6 +337,7 @@ class JC:
                 temperature=MODEL_SETTINGS["default_temperature"],
                 top_p=MODEL_SETTINGS["default_top_p"],
                 top_k=MODEL_SETTINGS["default_top_k"],
+                response_injection=response_injection
             )
 
             if memory_management == "Clear After Run":
@@ -355,6 +372,7 @@ class JC_adv:
                 "top_p": ("FLOAT", {"default": MODEL_SETTINGS["default_top_p"], "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Control the diversity of the output. Higher values allow more diverse word choices"}),
                 "top_k": ("INT", {"default": MODEL_SETTINGS["default_top_k"], "min": 0, "max": 100, "tooltip": "Limit the number of possible next tokens. Lower values make the output more focused"}),
                 "custom_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "Custom prompt template. If empty, will use the selected prompt style"}),
+                "response_injection": ("STRING", {"default": "", "multiline": True, "tooltip": "Injects starting tokens into the LLM's response to guide output directly."}),
                 "memory_management": (["Keep in Memory", "Clear After Run", "Global Cache"], {"default": "Keep in Memory", "tooltip": "Choose how to manage model memory. 'Keep in Memory' for faster processing, 'Clear After Run' for limited VRAM, 'Global Cache' for fastest processing if you have enough VRAM"}),
             },
             "optional": {
@@ -372,7 +390,7 @@ class JC_adv:
         self.current_memory_mode = None
         self.current_model = None
     
-    def generate(self, image, model, quantization, prompt_style, caption_length, max_new_tokens, temperature, top_p, top_k, custom_prompt, memory_management, extra_options=None):
+    def generate(self, image, model, quantization, prompt_style, caption_length, max_new_tokens, temperature, top_p, top_k, custom_prompt, response_injection, memory_management, extra_options=None):
         try:
             validate_model_parameters(quantization, list(MEMORY_EFFICIENT_CONFIGS.keys()))
             
@@ -412,6 +430,7 @@ class JC_adv:
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
+                response_injection=response_injection
             )
 
             if memory_management == "Clear After Run":
